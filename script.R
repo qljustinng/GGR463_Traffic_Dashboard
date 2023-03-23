@@ -31,9 +31,6 @@ boundary <- spTransform(boundary, "+proj=longlat +datum=WGS84 +no_defs")
 
 # PARAMETERS -------------------------------------------------------------------
 
-# Output maps to computer
-visualization <- FALSE
-
 # 
 # Ascending order
 dateSegments <- as.POSIXct(c("2006-01-01", "2007-01-01", "2008-01-01", 
@@ -287,7 +284,7 @@ ggplot() +
 st_write(RLC_sdf, "RLC_HOTSPOT.shp")
 
 rm(clean_kde_filename, extract, KDE_files, time_code, KDE, KDE_valid, RLC, 
-   RLC_df, RLC_spdf)
+   RLC_df, RLC_spdf, RLC_sdf)
 
 # Linear Regression & Map Creation ---------------------------------------------
 
@@ -314,6 +311,11 @@ dateMap2 <- function (dateUnformattedVector) {
   
   return(output)
 }
+
+# Ward boundary
+boundary <- readOGR("cleaned/citygcs.ward_2018_wgs84.shp")
+boundary <- spTransform(boundary, "+proj=longlat +datum=WGS84 +no_defs")
+boundary <- as(boundary, "sf")
 
 # Read in files and add time code
 RLC <- st_read("RLC_HOTSPOT.shp")
@@ -343,41 +345,31 @@ for (i in 1:nrow(RLC)) {
 }
 
 # Stores linear regression information
-multipleRegression <- list()
 multipleRegressionPartialBefore <- list()
 multipleRegressionPartialAfter <- list()
 
 # Variables for regression
-# y = "x_const" x + "x_int"
-# "*_p" is p value of coefficients
-x_int <- list()
-x_int_p <- list()
-x_const <- list()
-x_const_p <- list()
-r_squared <- list()
+# y = mx + b, R squared
 
+# R squared
 r_squared_before <- list()
-coeff_before <- list()
-intercept_before <- list()
-
 r_squared_after <- list()
+
+# m
+coeff_before <- list()
 coeff_after <- list()
+
+# b
+intercept_before <- list()
 intercept_after <- list()
 
+# coeff_after - coeff_before
 coeff_diff <- list()
 
 # Apply linear regression
 for(i in 1:length(RLC_reformat3)) {
-  # Single regression
-  multipleRegression[[i]] <- lm(RLC_reformat3[[i]]$time ~ RLC_reformat3[[i]]$accidentRate)
-  
-  x_int <- append(x_int, round(summary(multipleRegression[[i]])$coefficients[1, 1], digits=3))
-  x_int_p <- append(x_int_p, round(summary(multipleRegression[[i]])$coefficients[1, 4], digits=3))
-  x_const <- append(x_const, round(summary(multipleRegression[[i]])$coefficients[2, 1], digits=3))
-  x_const_p <- append(x_const_p, round(summary(multipleRegression[[i]])$coefficients[2, 4], digits=3))
-  r_squared <- append(r_squared, round(summary(multipleRegression[[i]])$r.squared, digits=3))
-  
-  
+
+  # Two regression lines (before and after)
   # Reformat to dataframe
   df <- map2_dfr(RLC_reformat3[[i]]$time, RLC_reformat3[[i]]$accidentRate, ~ tibble(time = .x, accidentRate = .y))
   
@@ -442,12 +434,17 @@ layout <- rbind(c(NA,NA,NA,2,2),
 
 # Analysis use
 for(i in 1:length(RLC_reformat3)) {
-  df = data.frame(long = RLC[["geometry"]][[i]][[1]], lat = RLC[["geometry"]][[i]][[2]]) 
+  df <- data.frame(long = RLC[["geometry"]][[i]][[1]], lat = RLC[["geometry"]][[i]][[2]]) 
+  data_item <- RLC_reformat3[[i]] %>% mutate(beforeAfter = case_when(time < 0 ~ 1, time > 0 ~ 2, time == 0 ~ 0))
   
   grid <- grid.arrange(
-    ggplot(data = RLC_reformat3[[i]], aes(x = time, y = accidentRate)) + 
-      geom_point(color='blue') +
-      geom_smooth(color='red', method = "lm", se = FALSE), 
+    ggplot(data = data_item, aes(x = time, y = accidentRate, group=beforeAfter)) + 
+      geom_point() +
+      geom_smooth(method = "lm", se = FALSE, aes(color=beforeAfter)) +
+      theme(legend.position = "none") +
+      labs(title="Accident Rate of Red-light Camera",
+           x ="Years since installation", 
+           y = "Accident Rate"), 
     
     ggplot() + 
       geom_sf(data = boundary) +
@@ -469,7 +466,6 @@ for(i in 1:length(RLC_reformat3)) {
   data_item <- RLC_reformat3[[i]] %>% mutate(beforeAfter = case_when(time < 0 ~ 1, time > 0 ~ 2, time == 0 ~ 0))
   img <- ggplot(data = data_item, aes(x = time, y = accidentRate, group=beforeAfter)) + 
     geom_point() +
-    #geom_smooth(color='red', method = "lm", se = FALSE) + 
     geom_smooth(method = "lm", se = FALSE, aes(color=beforeAfter)) +
     theme(legend.position = "none") +
     labs(title="Accident Rate of Red-light Camera",
@@ -486,7 +482,8 @@ RLC_spdf@data$coeff_after <- unlist(coeff_after)
 RLC_spdf@data$intercept_after <- unlist(intercept_after)
 RLC_spdf@data$r_squared_before <- unlist(r_squared_before)
 RLC_spdf@data$r_squared_after <- unlist(r_squared_after)
-RLC_spdf@data$img_no <- unlist(1:277)
+RLC_spdf@data$coeff_diff <- unlist(coeff_diff)
+RLC_spdf@data$img_no <- unlist(1:nrow(RLC_spdf)) # original IDs
 
 RLC_spdf_filtered <- as.data.frame(RLC_spdf)
 RLC_spdf_filtered <- RLC_spdf_filtered %>% mutate(goodData = ifelse(coeff_before == -9999 | 
@@ -496,10 +493,6 @@ RLC_spdf_filtered <- RLC_spdf_filtered %>% mutate(goodData = ifelse(coeff_before
                                                   FALSE, TRUE)) %>% filter(goodData == TRUE)
 
 RLC_spdf_filtered <- st_as_sf(RLC_spdf_filtered, coords = c("coords.x1", "coords.x2"), dim = "XY")
-
-boundary <- readOGR("cleaned/citygcs.ward_2018_wgs84.shp")
-boundary <- spTransform(boundary, "+proj=longlat +datum=WGS84 +no_defs")
-boundary <- as(boundary, "sf")
 
 # Interactive leaflet map
 map <- leaflet() %>%
@@ -549,23 +542,40 @@ html_file  <- gsub(pattern = "<title>leaflet</title>", replace = "<title>Red-lig
 writeLines(html_file, con="RLC_app.html")
 
 # Regression information
-hist(unlist(r_squared))
-hist(unlist(x_const))
 
-mean(unlist(r_squared))
-mean(unlist(x_const))
+# create two variable dataframe for histogram
+RLC_summary_list <- c(RLC_spdf_filtered$coeff_before, RLC_spdf_filtered$coeff_after, RLC_spdf_filtered$coeff_diff)
+RLC_summary_desig <- c(unlist(list(rep("Before", length(RLC_spdf_filtered$coeff_before)))),
+                       unlist(list(rep("After", length(RLC_spdf_filtered$coeff_after)))),
+                       unlist(list(rep("Difference", length(RLC_spdf_filtered$coeff_before)))))
 
-hist(unlist(r_squared_before)[unlist(r_squared_before) != -9999])
-hist(unlist(r_squared_after)[unlist(r_squared_after) != -9999])
+RLC_summary <- data.frame(data_type = RLC_summary_desig, 
+                          value = RLC_summary_list)
 
-hist(unlist(coeff_before)[unlist(coeff_before) != -9999])
-hist(unlist(coeff_after)[unlist(coeff_after) != -9999])
-hist(unlist(coeff_diff)[unlist(coeff_diff) != -9999])
+# histogram + mean for each coefficient
+data_text <- data.frame(
+  label = c(paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_before), 3))), 
+            paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_after), 3))), 
+            paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_diff), 3)))),
+  data_type   = c("Before", "After", "Difference"),
+  value = c(-2, -2, -2),
+  count = c(45, 45, 45)
+)
 
-mean(unlist(coeff_before)[unlist(coeff_before) != -9999])
-mean(unlist(coeff_after)[unlist(coeff_after) != -9999])
-mean(unlist(coeff_diff)[unlist(coeff_diff) != -9999])
+# output result
+img <- ggplot(data = RLC_summary, aes(x = value)) +
+              geom_histogram(binwidth = 0.1, aes(fill=data_type)) + 
+              facet_wrap(~factor(data_type, levels=c("Before", "After", "Difference")), ncol = 1) +
+              geom_text(data = data_text, mapping = aes(x = value, y = count, label = label)) +
+              theme(legend.position = "none")
+
+ggsave("regression.png", img)
 
 rm(boundary, img, map, multipleRegression, r_squared, RLC, RLC_reformat3, 
    temp_3, x_const, x_const_p, x_int, x_int_p, html_file, dateMap, dateMap2, 
-   active_date_class, col, dateSegments, i, RLC_cols, time_class_relative)
+   active_date_class, col, dateSegments, i, RLC_cols, time_class_relative, df, 
+   coeff_before, coeff_after, coeff_diff, data_item, data_text, grid, 
+   intercept_before, intercept_after, layout, multipleRegressionPartialBefore, 
+   multipleRegressionPartialAfter, RLC_spdf, RLC_spdf_filtered, 
+   r_squared_before, r_squared_after, RLC_summary, RLC_summary_desig, 
+   RLC_summary_list)
