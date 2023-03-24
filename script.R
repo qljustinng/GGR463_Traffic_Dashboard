@@ -221,7 +221,7 @@ for(time_code in valid_time_codes) {
   
   # Compute
   kde <- KSI_sf %>%
-    kde(band_width = band_width, kernel = "quartic", grid = kde_grid)
+    kde(band_width = band_width, kernel = "quartic", grid = kde_grid, weights = KSI_transformed@data$traffic)
   
   # Plot rectangular or hexagonal grid
   # tm_shape(c) +
@@ -284,7 +284,7 @@ ggplot() +
 st_write(RLC_sdf, "RLC_HOTSPOT.shp")
 
 rm(clean_kde_filename, extract, KDE_files, time_code, KDE, KDE_valid, RLC, 
-   RLC_df, RLC_spdf, RLC_sdf)
+   RLC_df, RLC_sdf)
 
 # Linear Regression & Map Creation ---------------------------------------------
 
@@ -556,20 +556,28 @@ RLC_summary <- data.frame(data_type = RLC_summary_desig,
 data_text <- data.frame(
   label = c(paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_before), 3))), 
             paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_after), 3))), 
-            paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_diff), 3)))),
-  data_type   = c("Before", "After", "Difference"),
-  value = c(-2, -2, -2),
-  count = c(45, 45, 45)
+            paste0("Mean: ", as.character(round(mean(RLC_spdf_filtered$coeff_diff), 3))),
+            paste0("Mean R^2: ", as.character(round(mean(RLC_spdf_filtered$r_squared_before), 3))),
+            paste0("Mean R^2: ", as.character(round(mean(RLC_spdf_filtered$r_squared_after), 3)))
+            ),
+  data_type   = c("Before", "After", "Difference", "Before", "After"),
+  value = c(-2000, -2000, -2000, 2000, 2000),
+  count = c(45, 45, 45, 45, 45)
 )
 
 # output result
 img <- ggplot(data = RLC_summary, aes(x = value)) +
-              geom_histogram(binwidth = 0.1, aes(fill=data_type)) + 
+              geom_histogram(binwidth = 50, aes(fill=data_type)) + 
               facet_wrap(~factor(data_type, levels=c("Before", "After", "Difference")), ncol = 1) +
               geom_text(data = data_text, mapping = aes(x = value, y = count, label = label)) +
               theme(legend.position = "none")
 
 ggsave("regression.png", img)
+
+RLC_summary_list <- c(RLC_spdf_filtered$coeff_before, RLC_spdf_filtered$coeff_after, RLC_spdf_filtered$coeff_diff)
+RLC_summary_desig <- c(unlist(list(rep("Before", length(RLC_spdf_filtered$coeff_before)))),
+                       unlist(list(rep("After", length(RLC_spdf_filtered$coeff_after)))),
+                       unlist(list(rep("Difference", length(RLC_spdf_filtered$coeff_before)))))
 
 rm(boundary, img, map, multipleRegression, r_squared, RLC, RLC_reformat3, 
    temp_3, x_const, x_const_p, x_int, x_int_p, html_file, dateMap, dateMap2, 
